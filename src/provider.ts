@@ -2,7 +2,7 @@
  * @quonaro/dsh-plugin-opencode/provider — expose the OpenCode CLI as an LLM
  * provider route.
  *
- * Registers provider `opencode` with `ctx.llm.registerAdapter`, so it appears
+ * Registers provider `opencode-agent` with `ctx.llm.registerAdapter`, so it appears
  * alongside ordinary model providers (Settings → Models, `/model`, agent
  * presets). Each generation spawns `opencode run --format json` with the
  * flattened transcript and streams its text events back as one text block.
@@ -187,7 +187,7 @@ class OpencodeLlmAdapter {
   ) {}
 
   providerInfo(provider: string): { id: string; name: string } {
-    return { id: provider, name: 'OpenCode' }
+    return { id: provider, name: 'OpenCode Agent' }
   }
 
   providerRetryPolicy(_provider: string): undefined {
@@ -364,14 +364,16 @@ class OpencodeLlmAdapter {
 }
 
 /**
- * Plugin body: register the `opencode` provider route and declare it in the
+ * Plugin body: register the `opencode-agent` provider route and declare it in the
  * configurable-provider directory so the web Models page can see it.
  */
 export function apply(ctx: Context, config: Config): void {
-  ctx.llm.registerAdapter(['opencode'], new OpencodeLlmAdapter(ctx, config))
+  // The route is `opencode-agent`, not `opencode`: the pi-ai catalog already
+  // owns `opencode` (OpenCode's own API) and the directory rejects duplicates.
+  ctx.llm.registerAdapter(['opencode-agent'], new OpencodeLlmAdapter(ctx, config))
   ctx.llm.registerConfigurableProviders([{
-    provider: 'opencode',
-    displayName: 'OpenCode',
+    provider: 'opencode-agent',
+    displayName: 'OpenCode Agent',
     settingsNs: name,
     settingsPath: [],
   }])

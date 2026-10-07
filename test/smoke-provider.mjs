@@ -13,7 +13,7 @@ assert.equal(typeof plugin.apply, 'function')
 
 // Fake opencode: streams two ndjson text events + step_finish then exits 0.
 const dir = mkdtempSync(join(tmpdir(), 'dsh-plugin-opencode-prov-'))
-const fakeOpencode = join(dir, 'opencode')
+const fakeOpencode = join(dir, 'opencode-agent')
 writeFileSync(fakeOpencode, `#!/bin/sh
 echo '{"type":"text","sessionID":"ses_fake","part":{"id":"p1","text":"chunk-one"}}'
 sleep 0.05
@@ -63,19 +63,19 @@ const config = Object.fromEntries(
 )
 
 plugin.apply(ctx, config)
-assert.deepEqual(registered.providers, ['opencode'])
-assert.equal(registered.adapter.providerInfo('opencode').name, 'OpenCode')
-assert.equal(configurable[0].provider, 'opencode')
+assert.deepEqual(registered.providers, ['opencode-agent'])
+assert.equal(registered.adapter.providerInfo('opencode-agent').name, 'OpenCode Agent')
+assert.equal(configurable[0].provider, 'opencode-agent')
 
-const models = await registered.adapter.listModels('opencode')
+const models = await registered.adapter.listModels('opencode-agent')
 assert.equal(models[0].id, 'default')
-assert.equal(models[0].provider, 'opencode')
+assert.equal(models[0].provider, 'opencode-agent')
 
 // One generation: system + user message in, streamed text out.
 const chunks = []
-const prepared = await registered.adapter.prepareCall('opencode', 'default')
+const prepared = await registered.adapter.prepareCall('opencode-agent', 'default')
 for await (const chunk of prepared.stream({
-  provider: 'opencode',
+  provider: 'opencode-agent',
   model: 'default',
   messages: [
     { role: 'user', content: [{ type: 'text', text: 'do the thing' }] },
