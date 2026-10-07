@@ -1,6 +1,6 @@
 {
   "name": "@quonaro/dsh-plugin-opencode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenCode CLI inside DeepSeek Harness: an `opencode` delegation tool, a /opencode command, and an `opencode` LLM provider route — all over the ctx.subprocess seam, with `opencode models` discovery.",
   "keywords": [
     "deepseek-harness",
