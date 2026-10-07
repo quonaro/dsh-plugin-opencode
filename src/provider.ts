@@ -29,7 +29,7 @@ import type {
   ToolSchema,
 } from '@deepseek-ai/dsh-llm'
 import { JsonRunParser, forwardedEnv, opencodeRunArgv } from './shared.ts'
-import { discoverModelsViaAcp, type DiscoveryResult } from './discover.ts'
+import { discoverModels, type DiscoveryResult } from './discover.ts'
 
 // Re-exported so the inferred Config type can name Dict in the emitted .d.ts (TS2883).
 export type { Dict } from '@deepseek-ai/cosmokit'
@@ -74,9 +74,9 @@ export interface Config {
   brief: Volatile<string>
   /** Answer session-title requests locally instead of spending an OpenCode run on them. */
   localSessionTitles: Volatile<boolean>
-  /** Probe `opencode acp` for the agent's real model catalog instead of using the static `models` table. */
+  /** List `opencode models` for the agent's real model catalog instead of using the static `models` table. */
   autoDiscoverModels: Volatile<boolean>
-  /** Timeout for one ACP discovery probe (initialize + session/new). */
+  /** Timeout for one `opencode models` listing. */
   discoveryTimeoutMs: Volatile<number>
   /** How long a successful discovery result is cached before re-probing. */
   discoveryCacheMs: Volatile<number>
@@ -187,7 +187,7 @@ class OpencodeLlmAdapter {
   ) {}
 
   providerInfo(provider: string): { id: string; name: string } {
-    return { id: provider, name: 'OpenCode Agent' }
+    return { id: provider, name: 'OpenCode ACP' }
   }
 
   providerRetryPolicy(_provider: string): undefined {
@@ -200,13 +200,13 @@ class OpencodeLlmAdapter {
 
   private discovered: { at: number; result: DiscoveryResult } | undefined
 
-  /** Probe `opencode acp` for the real catalog (cached); null on failure/disabled. */
+  /** List `opencode models` for the real catalog (cached); null on failure/disabled. */
   private async discover(): Promise<DiscoveryResult | null> {
     if (!this.config.autoDiscoverModels.get()) return null
     const cacheMs = this.config.discoveryCacheMs.get()
     if (this.discovered && Date.now() - this.discovered.at < cacheMs) return this.discovered.result
     try {
-      const result = await discoverModelsViaAcp(this.ctx, {
+      const result = await discoverModels(this.ctx, {
         opencodePath: this.config.opencodePath.get(),
         env: this.config.forwardEnv.get(),
         cwd: this.config.cwd.get() || process.cwd(),
@@ -373,7 +373,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.llm.registerAdapter(['opencode-agent'], new OpencodeLlmAdapter(ctx, config))
   ctx.llm.registerConfigurableProviders([{
     provider: 'opencode-agent',
-    displayName: 'OpenCode Agent',
+    displayName: 'OpenCode ACP',
     settingsNs: name,
     settingsPath: [],
   }])

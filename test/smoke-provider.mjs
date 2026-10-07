@@ -64,7 +64,7 @@ const config = Object.fromEntries(
 
 plugin.apply(ctx, config)
 assert.deepEqual(registered.providers, ['opencode-agent'])
-assert.equal(registered.adapter.providerInfo('opencode-agent').name, 'OpenCode Agent')
+assert.equal(registered.adapter.providerInfo('opencode-agent').name, 'OpenCode ACP')
 assert.equal(configurable[0].provider, 'opencode-agent')
 
 const models = await registered.adapter.listModels('opencode-agent')

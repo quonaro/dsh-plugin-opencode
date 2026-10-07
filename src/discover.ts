@@ -1,11 +1,12 @@
 /**
- * ACP model discovery for dsh-plugin-opencode/provider.
+ * Model discovery for dsh-plugin-opencode/provider.
  *
- * Spawns `opencode acp`, performs the initialize + session/new handshake over
- * newline-delimited JSON-RPC, and reads the advertised `configOptions` — the
- * entry with `category: 'model'` carries the agent's real model catalog
- * (`provider/model` ids). Result is cached in-process; failures return null
- * so callers can fall back to the static config table.
+ * Runs `opencode models` — the CLI's own catalog listing — and parses the
+ * `provider/model` ids it prints, one per line. This is the same catalog the
+ * agent's ACP configOptions advertise, but without paying for a session/new
+ * handshake, which can take tens of seconds on a cold start (a full session
+ * loads skills, commands, and the remote catalog). Failures return null so
+ * callers can fall back to the static config table.
  *
  * @module dsh-plugin-opencode/discover
  */
@@ -13,7 +14,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { forwardedEnv } from './shared.ts'
 
-/** One advertised model discovered over ACP. */
+/** One advertised model discovered from `opencode models`. */
 export interface DiscoveredModel {
   id: string
   name: string
@@ -23,83 +24,29 @@ export interface DiscoveredModel {
 /** Result of one successful discovery probe. */
 export interface DiscoveryResult {
   models: DiscoveredModel[]
-  /** The model id the agent currently has selected (configOption currentValue). */
+  /** The model id the agent currently has selected; `opencode models` does not report one. */
   currentId?: string | undefined
 }
 
-/* ---- configOption vocabulary ---- */
-
-interface AcpSelectOption {
-  value?: unknown
-  name?: string
-  label?: string
-  description?: string
-  options?: AcpSelectOption[]
-  group?: string
-}
-
-interface AcpConfigOption {
-  id: string
-  name?: string
-  category?: string
-  type?: string
-  currentValue?: unknown
-  options?: AcpSelectOption[]
-}
-
-function isModeOption(c: AcpConfigOption): boolean {
-  return c.category === 'mode' || c.id === 'mode' || c.id.includes('permission_mode')
-}
-
-function isModelOption(c: AcpConfigOption): boolean {
-  return c.category === 'model' || (!isModeOption(c) && c.id.includes('model'))
-}
-
-/** Flatten a select option's `options` (flat list or grouped sub-lists). */
-function flattenOptions(opt: AcpConfigOption | undefined): DiscoveredModel[] {
-  const out: DiscoveredModel[] = []
-  for (const entry of opt?.options ?? []) {
-    const items = Array.isArray(entry.options) ? entry.options : [entry]
-    for (const item of items) {
-      if (item.value === undefined || item.value === null) continue
-      const id = String(item.value)
-      out.push({
-        id,
-        name: item.name ?? item.label ?? id,
-        description: item.description,
-      })
-    }
+/**
+ * Parse `opencode models` output: one `provider/model` id per line; anything
+ * else (banners, warnings leaking to stdout) is skipped.
+ */
+export function modelsFromCliOutput(text: string): DiscoveryResult | null {
+  const models: DiscoveredModel[] = []
+  for (const raw of text.split('\n')) {
+    const id = raw.trim()
+    if (!/^[^\s/]+\/\S+$/.test(id)) continue
+    models.push({ id, name: id })
   }
-  return out
-}
-
-/** Extract the model catalog from a session/new result. */
-export function modelsFromSessionNew(result: unknown): DiscoveryResult | null {
-  const configOptions = (result as { configOptions?: AcpConfigOption[] } | null)?.configOptions
-  if (!Array.isArray(configOptions)) return null
-  const modelOpt = configOptions.find(isModelOption)
-  const models = flattenOptions(modelOpt)
-  if (models.length === 0) return null
-  const currentId = modelOpt?.currentValue === undefined ? undefined : String(modelOpt.currentValue)
-  return { models, currentId }
-}
-
-/* ---- minimal ndjson JSON-RPC client over ctx.subprocess pipes ---- */
-
-interface JsonRpcResponse {
-  jsonrpc: string
-  id?: number
-  result?: unknown
-  error?: { code: number; message: string }
-  method?: string
-  params?: unknown
+  return models.length ? { models } : null
 }
 
 /**
- * Discover the model catalog by probing `opencode acp`.
- * The child is terminated once session/new answers (or the timeout aborts it).
+ * Discover the model catalog by listing `opencode models`.
+ * The child is expected to exit on its own; terminate it in `finally` anyway.
  */
-export async function discoverModelsViaAcp(
+export async function discoverModels(
   ctx: Context,
   opts: {
     opencodePath: string
@@ -107,6 +54,7 @@ export async function discoverModelsViaAcp(
     cwd: string
     timeoutMs: number
     stderrMaxBytes?: number | undefined
+    stdoutMaxBytes?: number | undefined
     signal?: AbortSignal | undefined
   },
 ): Promise<DiscoveryResult | null> {
@@ -117,11 +65,11 @@ export async function discoverModelsViaAcp(
   const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout
 
   const handle = ctx.subprocess.spawn({
-    argv: [executable, 'acp', '--cwd', opts.cwd],
+    argv: [executable, 'models'],
     cwd: opts.cwd,
     stdio: {
-      stdin: 'pipe',
-      stdout: 'pipe',
+      stdin: 'ignore',
+      stdout: { maxBytes: opts.stdoutMaxBytes ?? 4_194_304 },
       stderr: { maxBytes: opts.stderrMaxBytes ?? 65_536 },
     },
     graceMs: 5_000,
@@ -130,67 +78,9 @@ export async function discoverModelsViaAcp(
   })
 
   try {
-    const stdin = handle.stdin
-    const stdout = handle.stdout as NodeJS.ReadableStream | undefined
-    if (!stdin || !stdout) return null
-
-    const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
-    let buffer = ''
-    let nextId = 1
-
-    // If the child dies mid-handshake, settle every in-flight request.
-    void handle.done.then((outcome) => {
-      const err = new Error(`opencode acp exited early (code ${outcome.exitCode ?? `signal ${outcome.signal}`})`)
-      for (const p of pending.values()) p.reject(err)
-      pending.clear()
-    })
-
-    stdout.on('data', (chunk: Buffer | string) => {
-      buffer += chunk.toString()
-      let idx: number
-      while ((idx = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, idx)
-        buffer = buffer.slice(idx + 1)
-        if (!line.trim()) continue
-        let msg: JsonRpcResponse
-        try {
-          msg = JSON.parse(line) as JsonRpcResponse
-        } catch {
-          continue
-        }
-        if (msg.id !== undefined && msg.method === undefined) {
-          const p = pending.get(msg.id)
-          if (p) {
-            pending.delete(msg.id)
-            if (msg.error) p.reject(new Error(`[${msg.error.code}] ${msg.error.message}`))
-            else p.resolve(msg.result)
-          }
-        } else if (msg.method !== undefined && msg.id !== undefined) {
-          // Agent → client request (fs/*, permission, …): refuse politely.
-          stdin.write(JSON.stringify({
-            jsonrpc: '2.0',
-            id: msg.id,
-            error: { code: -32601, message: 'not supported by dsh-plugin-opencode discovery' },
-          }) + '\n')
-        }
-      }
-    })
-
-    const request = (method: string, params: unknown): Promise<unknown> =>
-      new Promise((resolve, reject) => {
-        const id = nextId++
-        pending.set(id, { resolve, reject })
-        stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
-      })
-
-    await request('initialize', {
-      protocolVersion: 1,
-      clientInfo: { name: '@quonaro/dsh-plugin-opencode', version: '0.1.0' },
-      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
-    })
-
-    const session = await request('session/new', { cwd: opts.cwd, mcpServers: [] })
-    return modelsFromSessionNew(session)
+    const outcome = await handle.done
+    if (outcome.exitCode !== 0) return null
+    return modelsFromCliOutput(handle.collected.stdout?.readFrom(0).text ?? '')
   } finally {
     handle.terminate()
     await handle.waitForExit(AbortSignal.timeout(6_000)).catch(() => false)

@@ -1,5 +1,5 @@
-// Smoke test for ACP model discovery: a fake `opencode` binary speaks ndjson
-// JSON-RPC — answers initialize, and session/new with a configOptions model list.
+// Smoke test for `opencode models` discovery: a fake `opencode` binary prints
+// the catalog listing, one provider/model id per line.
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,28 +11,11 @@ assert.equal(plugin.name, '@quonaro/dsh-plugin-opencode/provider')
 
 const dir = mkdtempSync(join(tmpdir(), 'dsh-plugin-opencode-disc-'))
 const fakeOpencode = join(dir, 'opencode')
-writeFileSync(fakeOpencode, `#!/usr/bin/env node
-const readline = require('node:readline')
-const rl = readline.createInterface({ input: process.stdin })
-rl.on('line', (line) => {
-  let msg
-  try { msg = JSON.parse(line) } catch { return }
-  if (msg.method === 'initialize') {
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } }) + '\\n')
-  } else if (msg.method === 'session/new') {
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {
-      sessionId: 'ses_fake',
-      configOptions: [
-        { id: 'mode', category: 'mode', type: 'select', currentValue: 'build', options: [{ value: 'build', name: 'Build' }] },
-        { id: 'model', category: 'model', type: 'select', currentValue: 'opencode/big-pickle', options: [
-          { value: 'opencode/big-pickle', name: 'Big Pickle' },
-          { value: 'opencode/claude-sonnet-4-5', name: 'Claude Sonnet' },
-          { options: [{ value: 'openrouter/some-model', name: 'Grouped One' }], name: 'OpenRouter' }
-        ] }
-      ]
-    } }) + '\\n')
-  }
-})
+writeFileSync(fakeOpencode, `#!/bin/sh
+echo 'opencode/big-pickle'
+echo 'opencode/claude-sonnet-4-5'
+echo 'openrouter/some-model'
+echo 'not a model line'
 `)
 chmodSync(fakeOpencode, 0o755)
 
@@ -46,12 +29,16 @@ const ctx = {
     async resolveExecutable(cmd) { return cmd },
     spawn(spec) {
       const child = spawnChild(spec.argv[0], spec.argv.slice(1), { cwd: spec.cwd, env: { ...process.env, ...spec.env } })
+      const outBuf = []
+      child.stdout.on('data', (d) => outBuf.push(d))
       return {
         pid: child.pid,
         stdin: child.stdin,
         stdout: child.stdout,
         stderr: child.stderr,
-        collected: {},
+        collected: {
+          stdout: { readFrom: () => ({ text: Buffer.concat(outBuf).toString(), nextOffset: 0, lossy: false }) },
+        },
         done: new Promise((res) => child.on('close', (exitCode, signal) => res({ exitCode, signal }))),
         terminate() { child.kill('SIGTERM') },
         async waitForExit() { return true },
@@ -74,6 +61,6 @@ plugin.apply(ctx, config)
 const models = await registered.adapter.listModels('opencode')
 const ids = models.map((m) => m.id)
 assert.deepEqual(ids, ['default', 'opencode/big-pickle', 'opencode/claude-sonnet-4-5', 'openrouter/some-model'])
-assert.equal(models[2].name, 'Claude Sonnet')
-assert.match(models[0].description, /big-pickle/)
+assert.equal(models[2].name, 'opencode/claude-sonnet-4-5')
+assert.match(models[0].description, /headless/)
 console.log('smoke-discover: PASS')

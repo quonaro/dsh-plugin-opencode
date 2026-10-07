@@ -1,6 +1,6 @@
 # dsh-plugin-opencode
 
-Unofficial bridge between the [OpenCode](https://opencode.ai) CLI and DeepSeek Harness: an `opencode` delegation tool plus a `/opencode` command running `opencode run` (headless), and an `opencode-agent` LLM provider route with automatic model discovery over ACP — all over the `ctx.subprocess` seam. Not affiliated with the OpenCode project.
+Unofficial bridge between the [OpenCode](https://opencode.ai) CLI and DeepSeek Harness: an `opencode` delegation tool plus a `/opencode` command running `opencode run` (headless), and an `opencode-agent` LLM provider route with automatic model discovery via `opencode models` — all over the `ctx.subprocess` seam. Not affiliated with the OpenCode project.
 
 ## What the agent gets
 
@@ -15,7 +15,7 @@ Cancelling the tool call aborts the child via the subprocess seam's terminate es
 
 The route is `opencode-agent`, not `opencode`: the pi-ai catalog already owns `opencode` (OpenCode's own HTTP API), and the configurable-provider directory rejects duplicates.
 
-The adapter probes `opencode acp` (initialize + session/new) for the agent's real model catalog and caches the result; disable via `autoDiscoverModels` to use the static `models` table.
+The adapter lists `opencode models` for the agent's real model catalog and caches the result; disable via `autoDiscoverModels` to use the static `models` table.
 
 OpenCode is an agent, not a model — each call is a full autonomous session. Use it to hand whole tasks to OpenCode; latency is seconds to minutes.
 
@@ -37,18 +37,18 @@ The package declares `dsh.bundle`, so `dsh plugin add` applies `cordis.patch.yml
 
 Edit the `dsh-plugin-opencode` row in the profile's `cordis.patch.yml`, or the derived settings namespace in the GUI. All fields are volatile — changes apply to the next call without a restart.
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `opencodePath` | `opencode` | Executable name or absolute path |
-| `auto` | `true` | `--auto` auto-approves permissions not explicitly denied — headless runs can't answer prompts; marked dangerous upstream, tighten via `permission` in `opencode.jsonc` |
-| `model` | `''` | `-m provider/model`; empty = opencode config default |
-| `agent` | `''` | `--agent` sub-agent (e.g. `build`, `plan`) |
-| `attach` | `''` | `--attach <url>` drives a running `opencode serve` instead of a local instance |
-| `pure` | `false` | `--pure` disables external opencode plugins |
-| `timeoutMs` | `600000` | Cooperative timeout per delegation call |
-| `maxOutputBytes` | `1048576` | In-memory cap per captured stream; overflow keeps the tail |
-| `forwardEnv` | PATH/HOME/USER/XDG_*/OPENCODE_* | Env vars forwarded to the child |
-| `extraArgs` | `[]` | Extra CLI flags appended before the prompt |
+| Key              | Default                           | Notes                                                                                                                                                                  |
+| ---------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opencodePath`   | `opencode`                        | Executable name or absolute path                                                                                                                                       |
+| `auto`           | `true`                            | `--auto` auto-approves permissions not explicitly denied — headless runs can't answer prompts; marked dangerous upstream, tighten via `permission` in `opencode.jsonc` |
+| `model`          | `''`                              | `-m provider/model`; empty = opencode config default                                                                                                                   |
+| `agent`          | `''`                              | `--agent` sub-agent (e.g. `build`, `plan`)                                                                                                                             |
+| `attach`         | `''`                              | `--attach <url>` drives a running `opencode serve` instead of a local instance                                                                                         |
+| `pure`           | `false`                           | `--pure` disables external opencode plugins                                                                                                                            |
+| `timeoutMs`      | `600000`                          | Cooperative timeout per delegation call                                                                                                                                |
+| `maxOutputBytes` | `1048576`                         | In-memory cap per captured stream; overflow keeps the tail                                                                                                             |
+| `forwardEnv`     | PATH/HOME/USER/XDG*\*/OPENCODE*\* | Env vars forwarded to the child                                                                                                                                        |
+| `extraArgs`      | `[]`                              | Extra CLI flags appended before the prompt                                                                                                                             |
 
 Provider row (`dsh-plugin-opencode-provider`) adds `cwd`, `stderrMaxBytes`, `models` (static route→`-m` table), `brief`, `localSessionTitles`, `autoDiscoverModels`, `discoveryTimeoutMs`, `discoveryCacheMs`.
 
