@@ -94,4 +94,28 @@ assert.match(text, /chunk-two/)
 const usage = chunks.find((c) => c.type === 'usage')
 assert.equal(usage.usage.outputTokens, 7)
 assert.equal(usage.usage.inputTokens, 42)
+
+// Session-title requests arrive wrapped in the host's JSON framing; the cheap
+// local path must answer with the framed human text, not echo the instruction.
+const titleChunks = []
+for await (const chunk of prepared.stream({
+  provider: 'opencode-agent',
+  model: 'default',
+  purpose: 'session-title',
+  messages: [
+    {
+      role: 'user',
+      content: [{
+        type: 'text',
+        text: `Generate the session title from this JSON array of human messages:\n${JSON.stringify([
+          { seq: 8, text: 'refactor the auth module' },
+        ])}`,
+      }],
+    },
+  ],
+})) {
+  titleChunks.push(chunk)
+}
+const titleText = titleChunks.filter((c) => c.type === 'text-delta').map((c) => c.text).join('')
+assert.equal(titleText, 'refactor the auth module')
 console.log('smoke-provider: PASS')

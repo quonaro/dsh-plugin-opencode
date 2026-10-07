@@ -163,14 +163,41 @@ function resolveOpencodeModel(routeId: string, table: readonly { id: string; ope
   return routeId === 'default' ? '' : routeId
 }
 
-/** Last user text, for cheap local session titles. */
-function lastUserText(messages: readonly RequestMessage[]): string {
+/**
+ * Prefix the host wraps session-title requests in (`dsh-session-title-llm`
+ * `frameMessages`): the actual human messages sit inside a JSON payload.
+ */
+const TITLE_FRAME_PREFIX = 'Generate the session title from this JSON array of human messages:'
+
+/**
+ * Source text for a cheap local session title: the last user message, with the
+ * host's title-request JSON framing unwrapped to the first framed human message.
+ */
+function sessionTitleText(messages: readonly RequestMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!
-    if (message.role === 'user') {
-      const text = blocksToText(message.content).replace(/\s+/g, ' ').trim()
-      if (text) return text
+    if (message.role !== 'user') continue
+    const raw = blocksToText(message.content)
+    const at = raw.indexOf(TITLE_FRAME_PREFIX)
+    if (at === -1) return raw.replace(/\s+/g, ' ').trim() || 'OpenCode session'
+    try {
+      const items = JSON.parse(raw.slice(at + TITLE_FRAME_PREFIX.length)) as unknown
+      if (Array.isArray(items)) {
+        // Host items are `{seq, text}` projections of the eligible human
+        // messages; keep `content` blocks as a fallback shape.
+        for (const item of items as readonly { text?: unknown; content?: ContentBlock[] }[]) {
+          if (!item) continue
+          const rawText = typeof item.text === 'string'
+            ? item.text
+            : Array.isArray(item.content) ? blocksToText(item.content) : ''
+          const text = rawText.replace(/\s+/g, ' ').trim()
+          if (text) return text
+        }
+      }
+    } catch {
+      // Framed payload did not parse — fall back below.
     }
+    return 'OpenCode session'
   }
   return 'OpenCode session'
 }
@@ -270,7 +297,7 @@ class OpencodeLlmAdapter {
     // Cheap path: session-title generations are short text requests — spending a
     // whole OpenCode agent run on them would burn tokens for a one-line answer.
     if (options.purpose === 'session-title' && this.config.localSessionTitles.get()) {
-      const text = lastUserText(options.messages).slice(0, 80)
+      const text = sessionTitleText(options.messages).slice(0, 80)
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text }
       yield { type: 'block-end', index: 0, block: { type: 'text', text } }
